@@ -1,0 +1,13 @@
+{
+  "name" : "Scheduled Data Collection",
+  "description" : "Zolertia Firefly (CC2538) scheduled data collection test for LPIoT",
+  "start_time" : "asap",
+  "duration" : 600,
+  "logs": 0,
+  "binaries" : {
+    "hardware" : "firefly",
+    "bin_file" : "app.bin",
+    "targets" : "disi",
+    "programAddress": "0x00200000"
+  }
+}
