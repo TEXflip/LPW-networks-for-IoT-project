@@ -11,6 +11,7 @@
 /*---------------------------------------------------------------------------*/
 #define RSSI_THRESHOLD -95 // filter bad links
 #define BEACON_FORWARD_DELAY (random_rand() % CLOCK_SECOND)
+#define SEQN_OVERFLOW_TH 3 // number of accepting SEQN after overflow
 /*---------------------------------------------------------------------------*/
 PROCESS(sink_process, "Sink process");
 PROCESS(node_process, "Node process");
@@ -35,6 +36,10 @@ PROCESS_THREAD(sink_process, ev, data)
   PROCESS_BEGIN();
 
   struct sched_collect_conn *conn = (struct sched_collect_conn *)data;
+
+  conn->metric = 0;
+  conn->delay = 0;
+
   ctimer_set(&conn->beacon_timer, 0 * CLOCK_SECOND, beacon_timer_cb, conn);
 
   // periodically transmit the synchronization beacon
@@ -71,7 +76,7 @@ void sched_collect_open(struct sched_collect_conn *conn, uint16_t channels,
 
   linkaddr_copy(&conn->parent, &linkaddr_null);
   conn->metric = 65535;
-  conn->beacon_seqn = 0; // TODO: handle overflow
+  conn->beacon_seqn = 0;
   conn->callbacks = callbacks;
 
   // NETSTACK_MAC.on(); // TODO: handle duty cycle
@@ -117,17 +122,26 @@ void bc_recv(struct broadcast_conn *bc_conn, const linkaddr_t *sender)
 
   memcpy(&beacon, packetbuf_dataptr(), sizeof(struct beacon_msg));
   rssi = packetbuf_attr(PACKETBUF_ATTR_RSSI);
-  printf("collect: recv beacon from %02x:%02x seqn %u metric %u rssi %d\n",
+  printf("collect: recv beacon from %02x:%02x, seqn %u, metric %u, rssi %d, delay %u\n",
          sender->u8[0], sender->u8[1],
-         beacon.seqn, beacon.metric, rssi);
+         beacon.seqn, beacon.metric, rssi, (u_int16_t)beacon.delay);
 
-  if (beacon.seqn >= conn->beacon_seqn && beacon.metric < conn->metric && rssi > RSSI_THRESHOLD)
+  uint16_t my_seqn = conn->beacon_seqn, beacon_seqn = beacon.seqn;
+
+  if ((beacon_seqn >= my_seqn ||
+       (my_seqn >= 65536 - SEQN_OVERFLOW_TH && beacon_seqn <= (my_seqn + SEQN_OVERFLOW_TH) % 65536)) && // cheap way to handle overflow
+      beacon.metric < conn->metric &&                                                                   // accept better metrics
+      rssi > RSSI_THRESHOLD)                                                                            // discard bad RSSI
   {
     conn->metric = beacon.metric + 1;
     conn->parent = *sender;
-    conn->beacon_seqn = beacon.seqn;
+    conn->beacon_seqn = beacon_seqn;
+
+    clock_time_t new_delay = BEACON_FORWARD_DELAY;
+    conn->delay = new_delay + beacon.delay;
+
     if (conn->metric <= MAX_HOPS) // do not send beacons with metric > MAX_HOPS
-      ctimer_set(&conn->beacon_timer, BEACON_FORWARD_DELAY, send_beacon, conn);
+      ctimer_set(&conn->beacon_timer, new_delay, send_beacon, conn);
   }
 }
 /*---------------------------------------------------------------------------*/
@@ -137,23 +151,23 @@ void uc_recv(struct unicast_conn *uc_conn, const linkaddr_t *from)
 }
 /*---------------------------------------------------------------------------*/
 /* beacon event callback */
-void beacon_timer_cb(void* ptr)
+void beacon_timer_cb(void *ptr)
 {
-  struct sched_collect_conn *conn = (struct sched_collect_conn *) ptr;
+  struct sched_collect_conn *conn = (struct sched_collect_conn *)ptr;
 
-  conn->metric = 0;
   send_beacon(conn);
   conn->beacon_seqn++;
+
   ctimer_set(&conn->beacon_timer, EPOCH_DURATION, beacon_timer_cb, conn);
 }
 /* Send beacon using the current seqn and metric */
-void send_beacon(void* ptr)
+void send_beacon(void *ptr)
 {
-  struct sched_collect_conn *conn = (struct sched_collect_conn *) ptr;
+  struct sched_collect_conn *conn = (struct sched_collect_conn *)ptr;
   struct beacon_msg beacon = {
       .seqn = conn->beacon_seqn,
       .metric = conn->metric,
-      .delay = 0};
+      .delay = conn->delay};
 
   packetbuf_clear();
   packetbuf_copyfrom(&beacon, sizeof(beacon));
