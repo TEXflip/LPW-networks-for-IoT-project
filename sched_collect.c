@@ -19,41 +19,29 @@ PROCESS(node_process, "Node process");
 void bc_recv(struct broadcast_conn *conn, const linkaddr_t *sender);
 void uc_recv(struct unicast_conn *c, const linkaddr_t *from);
 /* Other function declarations */
-void send_beacon(struct sched_collect_conn *conn);
-void beacon_timer_cb(struct sched_collect_conn* conn);
+void send_beacon(void *ptr);
+void beacon_timer_cb(void *ptr);
 /*---------------------------------------------------------------------------*/
 /* Rime Callback structures */
 struct broadcast_callbacks bc_cb = {
     .recv = bc_recv,
-    .sent = NULL
-};
+    .sent = NULL};
 struct unicast_callbacks uc_cb = {
     .recv = uc_recv,
-    .sent = NULL
-};
+    .sent = NULL};
 /*---------------------------------------------------------------------------*/
 PROCESS_THREAD(sink_process, ev, data)
 {
   PROCESS_BEGIN();
 
   struct sched_collect_conn *conn = (struct sched_collect_conn *)data;
-  ctimer_set(&conn->beacon_timer, 1 * CLOCK_SECOND, beacon_timer_cb, conn);
+  ctimer_set(&conn->beacon_timer, 0 * CLOCK_SECOND, beacon_timer_cb, conn);
 
   // periodically transmit the synchronization beacon
   while (1)
   {
-    // printf("conn metric: %u\n", conn->metric);
 
     PROCESS_WAIT_EVENT();
-    //  PROCESS_WAIT_EVENT_UNTIL( ev==PROCESS_EVENT_TIMER && etimer_expired(&conn->beacon_timer) );
-    // if (ev == PROCESS_EVENT_TIMER && etimer_expired(&conn->beacon_timer))
-    // {
-    //   // send beacon
-    //   conn->beacon_seqn++;
-    //   conn->metric = 0;
-    //   send_beacon(conn);
-    //   etimer_set(&conn->beacon_timer, EPOCH_DURATION);
-    // }
   }
   PROCESS_END();
 }
@@ -62,17 +50,12 @@ PROCESS_THREAD(node_process, ev, data)
 {
   PROCESS_BEGIN();
 
-  struct sched_collect_conn *conn = (struct sched_collect_conn *)data;
+  // struct sched_collect_conn *conn = (struct sched_collect_conn *)data;
 
   // manage the phases of each epoch
   while (1)
   {
-    // printf("conn metric: %u\n", conn->metric);
     PROCESS_WAIT_EVENT();
-    // if (ev == PROCESS_EVENT_TIMER && etimer_expired(&conn->beacon_timer))
-    //   send_beacon(conn);
-
-    
   }
 
   PROCESS_END();
@@ -97,10 +80,7 @@ void sched_collect_open(struct sched_collect_conn *conn, uint16_t channels,
   unicast_open(&conn->uc, channels + 1, &uc_cb);
 
   if (is_sink)
-  {
-    conn->metric = 0;
     process_start(&sink_process, conn);
-  }
   else
     process_start(&node_process, conn);
 }
@@ -118,7 +98,7 @@ int sched_collect_send(struct sched_collect_conn *c, uint8_t *data, uint8_t len)
 struct beacon_msg
 { // Beacon message structure
   uint16_t seqn;
-  uint16_t metric;
+  uint16_t metric;    // TODO: use LQI?
   clock_time_t delay; // embed the transmission delay to help nodes synchronize
 } __attribute__((packed));
 /*---------------------------------------------------------------------------*/
@@ -140,12 +120,14 @@ void bc_recv(struct broadcast_conn *bc_conn, const linkaddr_t *sender)
   printf("collect: recv beacon from %02x:%02x seqn %u metric %u rssi %d\n",
          sender->u8[0], sender->u8[1],
          beacon.seqn, beacon.metric, rssi);
-  
-  if(beacon.seqn >= conn->beacon_seqn && beacon.metric < conn->metric && rssi > RSSI_THRESHOLD){
+
+  if (beacon.seqn >= conn->beacon_seqn && beacon.metric < conn->metric && rssi > RSSI_THRESHOLD)
+  {
     conn->metric = beacon.metric + 1;
     conn->parent = *sender;
-    ctimer_set(&conn->beacon_timer, BEACON_FORWARD_DELAY, send_beacon, conn);
-    // etimer_set(&conn->beacon_timer, BEACON_FORWARD_DELAY);
+    conn->beacon_seqn = beacon.seqn;
+    if (conn->metric <= MAX_HOPS) // do not send beacons with metric > MAX_HOPS
+      ctimer_set(&conn->beacon_timer, BEACON_FORWARD_DELAY, send_beacon, conn);
   }
 }
 /*---------------------------------------------------------------------------*/
@@ -155,16 +137,19 @@ void uc_recv(struct unicast_conn *uc_conn, const linkaddr_t *from)
 }
 /*---------------------------------------------------------------------------*/
 /* beacon event callback */
-void beacon_timer_cb(struct sched_collect_conn* conn)
+void beacon_timer_cb(void* ptr)
 {
+  struct sched_collect_conn *conn = (struct sched_collect_conn *) ptr;
+
   conn->metric = 0;
   send_beacon(conn);
   conn->beacon_seqn++;
   ctimer_set(&conn->beacon_timer, EPOCH_DURATION, beacon_timer_cb, conn);
 }
 /* Send beacon using the current seqn and metric */
-void send_beacon(struct sched_collect_conn *conn)
+void send_beacon(void* ptr)
 {
+  struct sched_collect_conn *conn = (struct sched_collect_conn *) ptr;
   struct beacon_msg beacon = {
       .seqn = conn->beacon_seqn,
       .metric = conn->metric,

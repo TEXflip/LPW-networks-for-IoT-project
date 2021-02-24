@@ -8,7 +8,6 @@
 #include "core/net/linkaddr.h"
 /*---------------------------------------------------------------------------*/
 #define EPOCH_DURATION (30 * CLOCK_SECOND)  // collect every 30 seconds
-#define START_DELAY (2 * CLOCK_SECOND)
 /*---------------------------------------------------------------------------*/
 #ifndef CONTIKI_TARGET_SKY
 /* Testbed experiments with Zoul Firefly platform */
