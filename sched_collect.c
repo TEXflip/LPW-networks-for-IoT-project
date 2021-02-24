@@ -122,9 +122,9 @@ void bc_recv(struct broadcast_conn *bc_conn, const linkaddr_t *sender)
 
   memcpy(&beacon, packetbuf_dataptr(), sizeof(struct beacon_msg));
   rssi = packetbuf_attr(PACKETBUF_ATTR_RSSI);
-  printf("collect: recv beacon from %02x:%02x, seqn %u, metric %u, rssi %d, delay %u\n",
+  printf("collect: recv beacon from %02x:%02x, seqn %u, metric %u, rssi %d, timestamp: %lu-%u=%lu\n",
          sender->u8[0], sender->u8[1],
-         beacon.seqn, beacon.metric, rssi, (u_int16_t)beacon.delay);
+         beacon.seqn, beacon.metric, rssi, (clock_time() * 1000 / CLOCK_SECOND), (u_int16_t)beacon.delay, (clock_time() * 1000 / CLOCK_SECOND) - (u_int16_t)beacon.delay);
 
   uint16_t my_seqn = conn->beacon_seqn, beacon_seqn = beacon.seqn;
 
