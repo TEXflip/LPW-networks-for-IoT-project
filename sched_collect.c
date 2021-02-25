@@ -122,9 +122,9 @@ void bc_recv(struct broadcast_conn *bc_conn, const linkaddr_t *sender)
 
   memcpy(&beacon, packetbuf_dataptr(), sizeof(struct beacon_msg));
   rssi = packetbuf_attr(PACKETBUF_ATTR_RSSI);
-  printf("collect: recv beacon from %02x:%02x, seqn %u, metric %u, rssi %d, timestamp: %lu-%u=%lu\n",
+  printf("collect: recv beacon from %02x:%02x, seqn %u, hops %u, rssi %d, delay %u\n",
          sender->u8[0], sender->u8[1],
-         beacon.seqn, beacon.metric, rssi, (clock_time() * 1000 / CLOCK_SECOND), (u_int16_t)beacon.delay, (clock_time() * 1000 / CLOCK_SECOND) - (u_int16_t)beacon.delay);
+         beacon.seqn, beacon.metric+1, rssi, (u_int16_t)beacon.delay);
 
   uint16_t my_seqn = conn->beacon_seqn, beacon_seqn = beacon.seqn;
 
@@ -139,8 +139,9 @@ void bc_recv(struct broadcast_conn *bc_conn, const linkaddr_t *sender)
 
     clock_time_t new_delay = BEACON_FORWARD_DELAY;
     conn->delay = new_delay + beacon.delay;
+    conn->offset = clock_time() - beacon.delay;
 
-    if (conn->metric <= MAX_HOPS) // do not send beacons with metric > MAX_HOPS
+    if (conn->metric < MAX_HOPS) // do not send beacons with metric > MAX_HOPS
       ctimer_set(&conn->beacon_timer, new_delay, send_beacon, conn);
   }
 }
