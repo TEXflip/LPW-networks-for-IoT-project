@@ -31,14 +31,17 @@ struct unicast_callbacks uc_cb = {
     .sent = NULL};
 /*---------------------------------------------------------------------------*/
 static struct etimer beacon_timer;
+static struct etimer collect_timer;
 process_event_t beacon_event;
-struct sched_collect_conn* conn_ptr;
+process_event_t collect_event;
+struct sched_collect_conn *conn_ptr;
 
 PROCESS_THREAD(sink_process, ev, data)
 {
   PROCESS_BEGIN();
   beacon_event = process_alloc_event();
-  etimer_set(&beacon_timer, 0 * CLOCK_SECOND);
+  collect_event = process_alloc_event();
+  etimer_set(&beacon_timer, (clock_time_t)0);
 
   // periodically transmit the synchronization beacon
   while (1)
@@ -49,8 +52,13 @@ PROCESS_THREAD(sink_process, ev, data)
     {
       send_beacon();
       conn_ptr->beacon_seqn++;
-      
+
       etimer_set(&beacon_timer, EPOCH_DURATION);
+      etimer_set(&collect_timer, MAX_HOPS * CLOCK_SECOND);
+    }
+    else if (ev == PROCESS_EVENT_TIMER && etimer_expired(&collect_timer))
+    {
+      printf("collect: %u in collection phase\n", node_id);
     }
   }
   PROCESS_END();
@@ -60,6 +68,7 @@ PROCESS_THREAD(node_process, ev, data)
 {
   PROCESS_BEGIN();
   beacon_event = process_alloc_event();
+  collect_event = process_alloc_event();
 
   // manage the phases of each epoch
   while (1)
@@ -67,9 +76,17 @@ PROCESS_THREAD(node_process, ev, data)
     PROCESS_WAIT_EVENT();
 
     if (ev == beacon_event)
-      etimer_set(&beacon_timer, *(clock_time_t*)(data));
-    else if (ev == PROCESS_EVENT_TIMER && etimer_expired(&beacon_timer))
-      send_beacon();
+      etimer_set(&beacon_timer, *(clock_time_t *)(data));
+    else if (ev == collect_event)
+      etimer_set(&collect_timer, MAX_HOPS * CLOCK_SECOND - *(clock_time_t *)(data));
+    else if (ev == PROCESS_EVENT_TIMER)
+    {
+      if (etimer_expired(&collect_timer))
+        printf("collect: %u in collection phase\n", node_id);
+        
+      else if (etimer_expired(&beacon_timer))
+        send_beacon();
+    }
   }
 
   PROCESS_END();
@@ -153,7 +170,10 @@ void bc_recv(struct broadcast_conn *bc_conn, const linkaddr_t *sender)
 
     clock_time_t new_delay = BEACON_FORWARD_DELAY;
     conn->delay = new_delay + beacon.delay;
-    conn->offset = clock_time() - beacon.delay;
+    // conn->offset = clock_time() - beacon.delay;
+    clock_time_t curr_delay = beacon.delay;
+
+    process_post(&node_process, collect_event, &curr_delay);
 
     if (conn->metric < MAX_HOPS) // do not send beacons with metric >= MAX_HOPS
       process_post(&node_process, beacon_event, &new_delay);

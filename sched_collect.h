@@ -35,7 +35,6 @@ struct sched_collect_conn {
   uint16_t metric;
   uint16_t beacon_seqn;
   clock_time_t delay;
-  clock_time_t offset;
   // you can add other useful variables to the object
 };
 /*---------------------------------------------------------------------------*/
