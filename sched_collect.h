@@ -32,7 +32,6 @@ struct sched_collect_conn {
   struct unicast_conn uc;
   const struct sched_collect_callbacks* callbacks;
   linkaddr_t parent;
-  struct ctimer beacon_timer;
   uint16_t metric;
   uint16_t beacon_seqn;
   clock_time_t delay;

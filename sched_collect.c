@@ -20,8 +20,7 @@ PROCESS(node_process, "Node process");
 void bc_recv(struct broadcast_conn *conn, const linkaddr_t *sender);
 void uc_recv(struct unicast_conn *c, const linkaddr_t *from);
 /* Other function declarations */
-void send_beacon(void *ptr);
-void beacon_timer_cb(void *ptr);
+void send_beacon();
 /*---------------------------------------------------------------------------*/
 /* Rime Callback structures */
 struct broadcast_callbacks bc_cb = {
@@ -31,22 +30,28 @@ struct unicast_callbacks uc_cb = {
     .recv = uc_recv,
     .sent = NULL};
 /*---------------------------------------------------------------------------*/
+static struct etimer beacon_timer;
+process_event_t beacon_event;
+struct sched_collect_conn* conn_ptr;
+
 PROCESS_THREAD(sink_process, ev, data)
 {
   PROCESS_BEGIN();
-
-  struct sched_collect_conn *conn = (struct sched_collect_conn *)data;
-
-  conn->metric = 0;
-  conn->delay = 0;
-
-  ctimer_set(&conn->beacon_timer, 0 * CLOCK_SECOND, beacon_timer_cb, conn);
+  beacon_event = process_alloc_event();
+  etimer_set(&beacon_timer, 0 * CLOCK_SECOND);
 
   // periodically transmit the synchronization beacon
   while (1)
   {
-
     PROCESS_WAIT_EVENT();
+
+    if (ev == PROCESS_EVENT_TIMER && etimer_expired(&beacon_timer))
+    {
+      send_beacon();
+      conn_ptr->beacon_seqn++;
+      
+      etimer_set(&beacon_timer, EPOCH_DURATION);
+    }
   }
   PROCESS_END();
 }
@@ -54,13 +59,17 @@ PROCESS_THREAD(sink_process, ev, data)
 PROCESS_THREAD(node_process, ev, data)
 {
   PROCESS_BEGIN();
-
-  // struct sched_collect_conn *conn = (struct sched_collect_conn *)data;
+  beacon_event = process_alloc_event();
 
   // manage the phases of each epoch
   while (1)
   {
     PROCESS_WAIT_EVENT();
+
+    if (ev == beacon_event)
+      etimer_set(&beacon_timer, *(clock_time_t*)(data));
+    else if (ev == PROCESS_EVENT_TIMER && etimer_expired(&beacon_timer))
+      send_beacon();
   }
 
   PROCESS_END();
@@ -83,9 +92,14 @@ void sched_collect_open(struct sched_collect_conn *conn, uint16_t channels,
 
   broadcast_open(&conn->bc, channels, &bc_cb);
   unicast_open(&conn->uc, channels + 1, &uc_cb);
+  conn_ptr = conn;
 
   if (is_sink)
+  {
+    conn->metric = 0;
+    conn->delay = 0;
     process_start(&sink_process, conn);
+  }
   else
     process_start(&node_process, conn);
 }
@@ -124,7 +138,7 @@ void bc_recv(struct broadcast_conn *bc_conn, const linkaddr_t *sender)
   rssi = packetbuf_attr(PACKETBUF_ATTR_RSSI);
   printf("collect: recv beacon from %02x:%02x, seqn %u, hops %u, rssi %d, delay %u\n",
          sender->u8[0], sender->u8[1],
-         beacon.seqn, beacon.metric+1, rssi, (u_int16_t)beacon.delay);
+         beacon.seqn, beacon.metric + 1, rssi, (u_int16_t)beacon.delay);
 
   uint16_t my_seqn = conn->beacon_seqn, beacon_seqn = beacon.seqn;
 
@@ -141,8 +155,8 @@ void bc_recv(struct broadcast_conn *bc_conn, const linkaddr_t *sender)
     conn->delay = new_delay + beacon.delay;
     conn->offset = clock_time() - beacon.delay;
 
-    if (conn->metric < MAX_HOPS) // do not send beacons with metric > MAX_HOPS
-      ctimer_set(&conn->beacon_timer, new_delay, send_beacon, conn);
+    if (conn->metric < MAX_HOPS) // do not send beacons with metric >= MAX_HOPS
+      process_post(&node_process, beacon_event, &new_delay);
   }
 }
 /*---------------------------------------------------------------------------*/
@@ -151,20 +165,10 @@ void uc_recv(struct unicast_conn *uc_conn, const linkaddr_t *from)
 {
 }
 /*---------------------------------------------------------------------------*/
-/* beacon event callback */
-void beacon_timer_cb(void *ptr)
-{
-  struct sched_collect_conn *conn = (struct sched_collect_conn *)ptr;
-
-  send_beacon(conn);
-  conn->beacon_seqn++;
-
-  ctimer_set(&conn->beacon_timer, EPOCH_DURATION, beacon_timer_cb, conn);
-}
 /* Send beacon using the current seqn and metric */
-void send_beacon(void *ptr)
+void send_beacon()
 {
-  struct sched_collect_conn *conn = (struct sched_collect_conn *)ptr;
+  struct sched_collect_conn *conn = conn_ptr;
   struct beacon_msg beacon = {
       .seqn = conn->beacon_seqn,
       .metric = conn->metric,
