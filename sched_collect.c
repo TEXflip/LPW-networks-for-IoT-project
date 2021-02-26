@@ -12,6 +12,7 @@
 #define RSSI_THRESHOLD -95 // filter bad links
 #define BEACON_FORWARD_DELAY (random_rand() % CLOCK_SECOND)
 #define SEQN_OVERFLOW_TH 3 // number of accepting SEQN after overflow
+#define SLOT_TIME ((clock_time_t)(CLOCK_SECOND * MAX_HOPS * 0.1))
 /*---------------------------------------------------------------------------*/
 PROCESS(sink_process, "Sink process");
 PROCESS(node_process, "Node process");
@@ -21,6 +22,7 @@ void bc_recv(struct broadcast_conn *conn, const linkaddr_t *sender);
 void uc_recv(struct unicast_conn *c, const linkaddr_t *from);
 /* Other function declarations */
 void send_beacon();
+void send_collect();
 /*---------------------------------------------------------------------------*/
 /* Rime Callback structures */
 struct broadcast_callbacks bc_cb = {
@@ -32,6 +34,7 @@ struct unicast_callbacks uc_cb = {
 /*---------------------------------------------------------------------------*/
 static struct etimer beacon_timer;
 static struct etimer collect_timer;
+static clock_time_t process_time;
 process_event_t beacon_event;
 process_event_t collect_event;
 struct sched_collect_conn *conn_ptr;
@@ -78,12 +81,14 @@ PROCESS_THREAD(node_process, ev, data)
     if (ev == beacon_event)
       etimer_set(&beacon_timer, *(clock_time_t *)(data));
     else if (ev == collect_event)
-      etimer_set(&collect_timer, MAX_HOPS * CLOCK_SECOND - *(clock_time_t *)(data));
+      etimer_set(&collect_timer, MAX_HOPS * CLOCK_SECOND - (*(clock_time_t *)data) + ((node_id - 1) * SLOT_TIME));
     else if (ev == PROCESS_EVENT_TIMER)
     {
       if (etimer_expired(&collect_timer))
-        printf("collect: %u in collection phase\n", node_id);
-        
+      {
+        // printf("collect: %u in collection phase\n", node_id);
+        send_collect();
+      }
       else if (etimer_expired(&beacon_timer))
         send_beacon();
     }
@@ -99,6 +104,7 @@ void sched_collect_open(struct sched_collect_conn *conn, uint16_t channels,
    * Start the appropriate process to perform the necessary epoch operations or 
    * use ctimers and callbacks as necessary to schedule these operations.
    */
+  conn->pending_msg.busy = false;
 
   linkaddr_copy(&conn->parent, &linkaddr_null);
   conn->metric = 65535;
@@ -127,7 +133,17 @@ int sched_collect_send(struct sched_collect_conn *c, uint8_t *data, uint8_t len)
    * time window. If the packet cannot be stored, e.g., because there is
    * a pending packet to be sent, return zero. Otherwise, return non-zero
    * to report operation success. */
-  return 0;
+
+  if (c->pending_msg.busy)
+    return 0;
+  else
+  {
+    memcpy(c->pending_msg.data, data, len);
+    c->pending_msg.len = len;
+    c->pending_msg.busy = true;
+
+    return 1;
+  }
 }
 /*---------------------------------------------------------------------------*/
 /* Routing and synchronization beacons */
@@ -137,10 +153,17 @@ struct beacon_msg
   uint16_t metric;    // TODO: use LQI?
   clock_time_t delay; // embed the transmission delay to help nodes synchronize
 } __attribute__((packed));
+/* Header structure for data packets */
+struct collect_header
+{
+  linkaddr_t source;
+  uint8_t hops;
+} __attribute__((packed));
 /*---------------------------------------------------------------------------*/
 /* Beacon receive callback */
 void bc_recv(struct broadcast_conn *bc_conn, const linkaddr_t *sender)
 {
+  process_time = clock_time();
   struct beacon_msg beacon;
   int16_t rssi;
   struct sched_collect_conn *conn = (struct sched_collect_conn *)(((uint8_t *)bc_conn) - offsetof(struct sched_collect_conn, bc));
@@ -153,9 +176,11 @@ void bc_recv(struct broadcast_conn *bc_conn, const linkaddr_t *sender)
 
   memcpy(&beacon, packetbuf_dataptr(), sizeof(struct beacon_msg));
   rssi = packetbuf_attr(PACKETBUF_ATTR_RSSI);
+  clock_time_t tot_delay = beacon.delay;
+
   printf("collect: recv beacon from %02x:%02x, seqn %u, hops %u, rssi %d, delay %u\n",
          sender->u8[0], sender->u8[1],
-         beacon.seqn, beacon.metric + 1, rssi, (u_int16_t)beacon.delay);
+         beacon.seqn, beacon.metric + 1, rssi, (u_int16_t)tot_delay);
 
   uint16_t my_seqn = conn->beacon_seqn, beacon_seqn = beacon.seqn;
 
@@ -169,11 +194,10 @@ void bc_recv(struct broadcast_conn *bc_conn, const linkaddr_t *sender)
     conn->beacon_seqn = beacon_seqn;
 
     clock_time_t new_delay = BEACON_FORWARD_DELAY;
-    conn->delay = new_delay + beacon.delay;
-    // conn->offset = clock_time() - beacon.delay;
-    clock_time_t curr_delay = beacon.delay;
+    tot_delay += (clock_time() - process_time) * 2 + 1;
+    conn->delay = new_delay + tot_delay;
 
-    process_post(&node_process, collect_event, &curr_delay);
+    process_post(&node_process, collect_event, &tot_delay);
 
     if (conn->metric < MAX_HOPS) // do not send beacons with metric >= MAX_HOPS
       process_post(&node_process, beacon_event, &new_delay);
@@ -183,6 +207,26 @@ void bc_recv(struct broadcast_conn *bc_conn, const linkaddr_t *sender)
 /* Data receive callback */
 void uc_recv(struct unicast_conn *uc_conn, const linkaddr_t *from)
 {
+  if (packetbuf_datalen() < sizeof(struct collect_header))
+  {
+    printf("collect: too short unicast packet %d\n", packetbuf_datalen());
+    return;
+  }
+
+  struct collect_header hdr;
+
+  if (conn_ptr->metric == 0)
+  {
+    memcpy(&hdr, packetbuf_dataptr(), sizeof(struct collect_header));
+    packetbuf_hdrreduce(sizeof(struct collect_header));
+    conn_ptr->callbacks->recv(&hdr.source, hdr.hops + 1);
+  }
+  else
+  {
+    struct collect_header *hdr_ptr = packetbuf_dataptr();
+    hdr_ptr->hops++;
+    unicast_send(&conn_ptr->uc, &conn_ptr->parent);
+  }
 }
 /*---------------------------------------------------------------------------*/
 /* Send beacon using the current seqn and metric */
@@ -198,4 +242,28 @@ void send_beacon()
   packetbuf_copyfrom(&beacon, sizeof(beacon));
   printf("collect: sending beacon: seqn %d metric %d\n", conn->beacon_seqn, conn->metric);
   broadcast_send(&conn->bc);
+}
+/*---------------------------------------------------------------------------*/
+/* Send collect msg with unicast */
+void send_collect()
+{
+  if (!conn_ptr->pending_msg.busy || linkaddr_cmp(&conn_ptr->parent, &linkaddr_null))
+    return;
+
+  struct msg_buffer *msg = &conn_ptr->pending_msg;
+  struct collect_header hdr = {.source = linkaddr_node_addr, .hops = 0};
+
+  // add data to buffer
+  packetbuf_clear();
+  memcpy(packetbuf_dataptr(), msg->data, msg->len);
+  packetbuf_set_datalen(msg->len);
+
+  // add header
+  packetbuf_hdralloc(sizeof(struct collect_header));
+  memcpy(packetbuf_hdrptr(), &hdr, sizeof(struct collect_header));
+
+  // send packet
+  printf("collect: %u sending msg\n", node_id);
+  unicast_send(&conn_ptr->uc, &conn_ptr->parent);
+  conn_ptr->pending_msg.busy = false; // free the buffer
 }

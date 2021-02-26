@@ -27,10 +27,17 @@ struct sched_collect_callbacks {
 };
 /*---------------------------------------------------------------------------*/
 /* Connection object */
+struct msg_buffer
+{
+  uint8_t *data;
+  uint8_t len;
+  bool busy;
+};
 struct sched_collect_conn {
   struct broadcast_conn bc;
   struct unicast_conn uc;
   const struct sched_collect_callbacks* callbacks;
+  struct msg_buffer pending_msg;
   linkaddr_t parent;
   uint16_t metric;
   uint16_t beacon_seqn;
