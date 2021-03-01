@@ -13,6 +13,7 @@
 #define BEACON_FORWARD_DELAY (random_rand() % CLOCK_SECOND)
 #define SEQN_OVERFLOW_TH 3 // number of accepting SEQN after overflow
 #define SLOT_TIME ((clock_time_t)(CLOCK_SECOND * MAX_HOPS * 0.1))
+#define GUARD_TIME ((clock_time_t)(CLOCK_SECOND * MAX_HOPS * 0.05))
 /*---------------------------------------------------------------------------*/
 PROCESS(sink_process, "Sink process");
 PROCESS(node_process, "Node process");
@@ -23,6 +24,8 @@ void uc_recv(struct unicast_conn *c, const linkaddr_t *from);
 /* Other function declarations */
 void send_beacon();
 void send_collect();
+void sleep_cb(void *p) { NETSTACK_MAC.off(false); }
+void wakeup_cb(void *p);
 /*---------------------------------------------------------------------------*/
 /* Rime Callback structures */
 struct broadcast_callbacks bc_cb = {
@@ -32,8 +35,11 @@ struct unicast_callbacks uc_cb = {
     .recv = uc_recv,
     .sent = NULL};
 /*---------------------------------------------------------------------------*/
-static struct etimer beacon_timer;
+static struct etimer beacon_etimer;
+static struct ctimer beacon_ctimer;
 static struct etimer collect_timer;
+static struct ctimer sleep_timer;
+static struct ctimer wakeup_timer;
 static clock_time_t process_time;
 process_event_t beacon_event;
 process_event_t collect_event;
@@ -44,20 +50,22 @@ PROCESS_THREAD(sink_process, ev, data)
   PROCESS_BEGIN();
   beacon_event = process_alloc_event();
   collect_event = process_alloc_event();
-  etimer_set(&beacon_timer, (clock_time_t)0);
+  etimer_set(&beacon_etimer, (clock_time_t)0);
 
   // periodically transmit the synchronization beacon
   while (1)
   {
     PROCESS_WAIT_EVENT();
 
-    if (ev == PROCESS_EVENT_TIMER && etimer_expired(&beacon_timer))
+    if (ev == PROCESS_EVENT_TIMER && etimer_expired(&beacon_etimer))
     {
-      send_beacon();
+      NETSTACK_MAC.on();
       conn_ptr->beacon_seqn++;
+      send_beacon(NULL);
 
-      etimer_set(&beacon_timer, EPOCH_DURATION);
+      etimer_set(&beacon_etimer, EPOCH_DURATION);
       etimer_set(&collect_timer, MAX_HOPS * CLOCK_SECOND);
+      ctimer_set(&sleep_timer, MAX_HOPS * CLOCK_SECOND + MAX_NODES * SLOT_TIME, sleep_cb, NULL);
     }
     else if (ev == PROCESS_EVENT_TIMER && etimer_expired(&collect_timer))
     {
@@ -72,26 +80,23 @@ PROCESS_THREAD(node_process, ev, data)
   PROCESS_BEGIN();
   beacon_event = process_alloc_event();
   collect_event = process_alloc_event();
+  clock_time_t tot_delay = 0;
 
   // manage the phases of each epoch
   while (1)
   {
     PROCESS_WAIT_EVENT();
 
-    if (ev == beacon_event)
-      etimer_set(&beacon_timer, *(clock_time_t *)(data));
-    else if (ev == collect_event)
-      etimer_set(&collect_timer, MAX_HOPS * CLOCK_SECOND - (*(clock_time_t *)data) + ((node_id - 1) * SLOT_TIME));
-    else if (ev == PROCESS_EVENT_TIMER)
+    if (ev == collect_event)
     {
-      if (etimer_expired(&collect_timer))
-      {
-        // printf("collect: %u in collection phase\n", node_id);
-        send_collect();
-      }
-      else if (etimer_expired(&beacon_timer))
-        send_beacon();
+      tot_delay = (*(clock_time_t *)data);
+      etimer_set(&collect_timer, MAX_HOPS * CLOCK_SECOND + ((node_id - 1) * SLOT_TIME) - tot_delay);
+      ctimer_set(&sleep_timer, MAX_HOPS * CLOCK_SECOND + MAX_NODES * SLOT_TIME - tot_delay, sleep_cb, NULL);
+      ctimer_set(&wakeup_timer, EPOCH_DURATION - tot_delay - GUARD_TIME, wakeup_cb, NULL);
     }
+    else if (ev == PROCESS_EVENT_TIMER && etimer_expired(&collect_timer))
+      send_collect();
+
   }
 
   PROCESS_END();
@@ -178,9 +183,9 @@ void bc_recv(struct broadcast_conn *bc_conn, const linkaddr_t *sender)
   rssi = packetbuf_attr(PACKETBUF_ATTR_RSSI);
   clock_time_t tot_delay = beacon.delay;
 
-  printf("collect: recv beacon from %02x:%02x, seqn %u, hops %u, rssi %d, delay %u\n",
+  printf("collect: recv beacon from %02x:%02x, seqn %u, metric %u, rssi %d, delay %u - my_seqn %u, my_metric %u\n",
          sender->u8[0], sender->u8[1],
-         beacon.seqn, beacon.metric + 1, rssi, (u_int16_t)tot_delay);
+         beacon.seqn, beacon.metric, rssi, (u_int16_t)tot_delay, conn->beacon_seqn, conn->metric);
 
   uint16_t my_seqn = conn->beacon_seqn, beacon_seqn = beacon.seqn;
 
@@ -200,7 +205,8 @@ void bc_recv(struct broadcast_conn *bc_conn, const linkaddr_t *sender)
     process_post(&node_process, collect_event, &tot_delay);
 
     if (conn->metric < MAX_HOPS) // do not send beacons with metric >= MAX_HOPS
-      process_post(&node_process, beacon_event, &new_delay);
+      ctimer_set(&beacon_ctimer, new_delay, send_beacon, NULL);
+    
   }
 }
 /*---------------------------------------------------------------------------*/
@@ -230,7 +236,7 @@ void uc_recv(struct unicast_conn *uc_conn, const linkaddr_t *from)
 }
 /*---------------------------------------------------------------------------*/
 /* Send beacon using the current seqn and metric */
-void send_beacon()
+void send_beacon(void *ptr)
 {
   struct sched_collect_conn *conn = conn_ptr;
   struct beacon_msg beacon = {
@@ -266,4 +272,11 @@ void send_collect()
   printf("collect: %u sending msg\n", node_id);
   unicast_send(&conn_ptr->uc, &conn_ptr->parent);
   conn_ptr->pending_msg.busy = false; // free the buffer
+}
+/*---------------------------------------------------------------------------*/
+/* wake up callback */
+void wakeup_cb(void *p)
+{
+  NETSTACK_MAC.on();
+  conn_ptr->metric = 65535;
 }
