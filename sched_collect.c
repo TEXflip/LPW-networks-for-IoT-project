@@ -12,7 +12,7 @@
 #define RSSI_THRESHOLD -95 // filter bad links
 #define BEACON_FORWARD_DELAY (random_rand() % CLOCK_SECOND)
 #define SEQN_OVERFLOW_TH 3 // number of accepting SEQN after overflow
-#define SLOT_TIME ((clock_time_t)(CLOCK_SECOND * MAX_HOPS * 0.1))
+#define SLOT_TIME ((clock_time_t)(CLOCK_SECOND * MAX_HOPS * 0.05))
 #define GUARD_TIME ((clock_time_t)(CLOCK_SECOND * MAX_HOPS * 0.05))
 /*---------------------------------------------------------------------------*/
 PROCESS(sink_process, "Sink process");
@@ -41,14 +41,12 @@ static struct etimer collect_timer;
 static struct ctimer sleep_timer;
 static struct ctimer wakeup_timer;
 static clock_time_t process_time;
-process_event_t beacon_event;
 process_event_t collect_event;
 struct sched_collect_conn *conn_ptr;
 
 PROCESS_THREAD(sink_process, ev, data)
 {
   PROCESS_BEGIN();
-  beacon_event = process_alloc_event();
   collect_event = process_alloc_event();
   etimer_set(&beacon_etimer, (clock_time_t)0);
 
@@ -65,7 +63,7 @@ PROCESS_THREAD(sink_process, ev, data)
 
       etimer_set(&beacon_etimer, EPOCH_DURATION);
       etimer_set(&collect_timer, MAX_HOPS * CLOCK_SECOND);
-      ctimer_set(&sleep_timer, MAX_HOPS * CLOCK_SECOND + MAX_NODES * SLOT_TIME, sleep_cb, NULL);
+      ctimer_set(&sleep_timer, MAX_HOPS * CLOCK_SECOND + (MAX_NODES-1) * SLOT_TIME, sleep_cb, NULL);
     }
     else if (ev == PROCESS_EVENT_TIMER && etimer_expired(&collect_timer))
     {
@@ -78,7 +76,6 @@ PROCESS_THREAD(sink_process, ev, data)
 PROCESS_THREAD(node_process, ev, data)
 {
   PROCESS_BEGIN();
-  beacon_event = process_alloc_event();
   collect_event = process_alloc_event();
   clock_time_t tot_delay = 0;
 
@@ -90,13 +87,12 @@ PROCESS_THREAD(node_process, ev, data)
     if (ev == collect_event)
     {
       tot_delay = (*(clock_time_t *)data);
-      etimer_set(&collect_timer, MAX_HOPS * CLOCK_SECOND + ((node_id - 1) * SLOT_TIME) - tot_delay);
-      ctimer_set(&sleep_timer, MAX_HOPS * CLOCK_SECOND + MAX_NODES * SLOT_TIME - tot_delay, sleep_cb, NULL);
+      etimer_set(&collect_timer, MAX_HOPS * CLOCK_SECOND + ((node_id - 2) * SLOT_TIME) - tot_delay);
+      ctimer_set(&sleep_timer, MAX_HOPS * CLOCK_SECOND + (MAX_NODES - 1) * SLOT_TIME - tot_delay, sleep_cb, NULL);
       ctimer_set(&wakeup_timer, EPOCH_DURATION - tot_delay - GUARD_TIME, wakeup_cb, NULL);
     }
     else if (ev == PROCESS_EVENT_TIMER && etimer_expired(&collect_timer))
       send_collect();
-
   }
 
   PROCESS_END();
@@ -206,7 +202,6 @@ void bc_recv(struct broadcast_conn *bc_conn, const linkaddr_t *sender)
 
     if (conn->metric < MAX_HOPS) // do not send beacons with metric >= MAX_HOPS
       ctimer_set(&beacon_ctimer, new_delay, send_beacon, NULL);
-    
   }
 }
 /*---------------------------------------------------------------------------*/
