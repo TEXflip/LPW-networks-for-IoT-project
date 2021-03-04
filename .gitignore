@@ -54,6 +54,11 @@ dkms.conf
 # cooja
 *.sky
 obj_sky
-*.log
+COOJA.log
 symbols.c
 symbols.h
+
+#testbed
+*.zoul
+app.bin
+obj_zoul

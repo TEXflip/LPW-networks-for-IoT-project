@@ -114,8 +114,8 @@ def compute_node_duty_cycle(fenergest):
 
 	print("\n----- Duty Cycle Stats -----")
 	print("Average Duty Cycle: {:.3f}%\nStandard Deviation: {:.3f}"
-		  "\nMinimum: {:.3f}\nMaximum: {:.3f}".format(np.mean(dc),
-		  np.std(dc), np.amin(dc), np.amax(dc)))
+		  "\nMinimum: {:.3f}\nMaximum: {:.3f}".format(np.mean(dc_lst),
+		  np.std(dc_lst), np.amin(dc_lst), np.amax(dc_lst)))
 
 	# Save PDR dataframe to a CSV file
 	fpath = os.path.dirname(fenergest)

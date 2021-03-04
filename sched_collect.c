@@ -112,8 +112,6 @@ void sched_collect_open(struct sched_collect_conn *conn, uint16_t channels,
   conn->beacon_seqn = 0;
   conn->callbacks = callbacks;
 
-  // NETSTACK_MAC.on(); // TODO: handle duty cycle
-
   broadcast_open(&conn->bc, channels, &bc_cb);
   unicast_open(&conn->uc, channels + 1, &uc_cb);
   conn_ptr = conn;
@@ -139,10 +137,23 @@ int sched_collect_send(struct sched_collect_conn *c, uint8_t *data, uint8_t len)
     return 0;
   else
   {
+    // printf("collect: pre copy %d, old mem %d\n", *((uint16_t *) data), *((uint16_t *) c->pending_msg.data));
+    #ifndef CONTIKI_TARGET_SKY
+    c->pending_msg.data = data; // for some reason in Zolertia Firefly I cannot copy the content of data
+    #else
     memcpy(c->pending_msg.data, data, len);
+    #endif
+    // unsigned short i;
+    // for (i = 0; i < len; i++){
+    //   printf("collect: bef cp %u, %u = %u\n", i, c->pending_msg.data[i], data[i]);
+    //   c->pending_msg.data[i] = data[i];
+    //   printf("collect: aftr cp %u, %u = %u\n", i, c->pending_msg.data[i], data[i]);
+    // }
+    
     c->pending_msg.len = len;
     c->pending_msg.busy = true;
 
+    // printf("collect: post copy %d\n", *((uint16_t *) c->pending_msg.data));
     return 1;
   }
 }
@@ -220,7 +231,9 @@ void uc_recv(struct unicast_conn *uc_conn, const linkaddr_t *from)
   {
     memcpy(&hdr, packetbuf_dataptr(), sizeof(struct collect_header));
     packetbuf_hdrreduce(sizeof(struct collect_header));
-    conn_ptr->callbacks->recv(&hdr.source, hdr.hops + 1);
+
+    linkaddr_t source = hdr.source;
+    conn_ptr->callbacks->recv(&source, hdr.hops + 1);
   }
   else
   {
