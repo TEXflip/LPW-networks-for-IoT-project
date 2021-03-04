@@ -1,0 +1,1 @@
+sudo openconnect --protocol=gp --user=michele.tessari@unitn.it vpn.icts.unitn.it
