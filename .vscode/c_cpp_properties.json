@@ -9,7 +9,7 @@
                 "~/contiki-uwb/contiki/core"
             ],
             "defines": [],
-            "compilerPath": "/home/tex/gcc-arm-none-eabi-9-2019-q4-major-x86_64-linux/gcc-arm-none-eabi-9-2019-q4-major/bin/arm-none-eabi-gcc",
+            "compilerPath": "/home/tex/gcc-arm/gcc-arm-none-eabi-9-2019-q4-major/bin/arm-none-eabi-gcc",
             "cStandard": "gnu17",
             "cppStandard": "gnu++14",
             "intelliSenseMode": "linux-gcc-arm"
