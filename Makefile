@@ -13,7 +13,8 @@ endif
 DEFINES=PROJECT_CONF_H=\"project-conf.h\"
 CONTIKI_PROJECT = app
 
-PROJECT_SOURCEFILES += sched_collect.c
+# PROJECT_SOURCEFILES += sched_collect.c
+PROJECT_SOURCEFILES += sched_collect_rndDelay.c
 
 # Tools for testbed experiments to set node IDs and estimate node duty cycle
 PROJECTDIRS += tools

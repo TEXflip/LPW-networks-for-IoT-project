@@ -1,0 +1,5 @@
+File: experiment.json
+Job file valid
+Submit job to testbed
+attached: app.bin
+result: (True, {'result': 'accepted', 'problems': [], 'job_id': 1000, 'scheduled': ['2021-03-09T16:16:00+01:00', '2021-03-09T16:26:40+01:00']})
