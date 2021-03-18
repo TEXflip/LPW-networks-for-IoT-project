@@ -12,7 +12,7 @@
 #define RSSI_THRESHOLD -95 // filter bad links
 #define BEACON_FORWARD_DELAY (random_rand() % CLOCK_SECOND)
 #define SEQN_OVERFLOW_TH 3 // number of accepting SEQN after overflow
-#define SLOT_TIME ((clock_time_t)(CLOCK_SECOND * MAX_HOPS * 0.05))
+#define SLOT_TIME ((clock_time_t)(CLOCK_SECOND * MAX_HOPS * 0.01))
 #define GUARD_TIME ((clock_time_t)(CLOCK_SECOND * MAX_HOPS * 0.05))
 /*---------------------------------------------------------------------------*/
 PROCESS(sink_process, "Sink process");
