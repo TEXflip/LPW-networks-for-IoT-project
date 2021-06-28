@@ -12,7 +12,7 @@
 #define RSSI_THRESHOLD -95 // filter bad links
 #define BEACON_FORWARD_DELAY (random_rand() % CLOCK_SECOND)
 #define SEQN_OVERFLOW_TH 3 // number of accepting SEQN after overflow
-#define SLOT_TIME ((clock_time_t)(CLOCK_SECOND * MAX_HOPS * 0.001))
+#define SLOT_TIME ((clock_time_t)(CLOCK_SECOND * MAX_HOPS * 0.01))
 #define GUARD_TIME ((clock_time_t)(CLOCK_SECOND * MAX_HOPS * 0.05))
 /*---------------------------------------------------------------------------*/
 PROCESS(sink_process, "Sink process");
@@ -206,10 +206,10 @@ void bc_recv(struct broadcast_conn *bc_conn, const linkaddr_t *sender)
     conn->beacon_seqn = beacon_seqn;
 
     clock_time_t new_delay = BEACON_FORWARD_DELAY;
-    tot_delay += (clock_time() - process_time) * 2 + 1;
+    tot_delay += (clock_time() - process_time) * 2 + 1; // qualitative approx. of the processing delay
     conn->delay = new_delay + tot_delay;
 
-    process_post(&node_process, collect_event, &tot_delay);
+    process_post(&node_process, collect_event, &tot_delay); // set all the timers for collection, sleep and wake up
 
     if (conn->metric < MAX_HOPS) // do not send beacons with metric >= MAX_HOPS
       ctimer_set(&beacon_ctimer, new_delay, send_beacon, NULL);
