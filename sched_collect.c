@@ -12,8 +12,10 @@
 #define RSSI_THRESHOLD -95 // filter bad links
 #define BEACON_FORWARD_DELAY (random_rand() % CLOCK_SECOND)
 #define SEQN_OVERFLOW_TH 3 // number of accepting SEQN after overflow
-#define SLOT_TIME ((clock_time_t)(CLOCK_SECOND * MAX_HOPS * 0.01))
-#define GUARD_TIME ((clock_time_t)(CLOCK_SECOND * MAX_HOPS * 0.05))
+#define SLOT_FRACTION 0.01
+#define GUARD_FRACTION 0.05
+#define SLOT_TIME ((clock_time_t)(CLOCK_SECOND * MAX_HOPS * SLOT_FRACTION))
+#define GUARD_TIME ((clock_time_t)(CLOCK_SECOND * MAX_HOPS * GUARD_FRACTION))
 /*---------------------------------------------------------------------------*/
 PROCESS(sink_process, "Sink process");
 PROCESS(node_process, "Node process");
@@ -84,7 +86,7 @@ PROCESS_THREAD(node_process, ev, data)
   {
     PROCESS_WAIT_EVENT();
 
-    if (ev == collect_event)
+    if (ev == collect_event) // event triggered when a beacon is accepted
     {
       tot_delay = (*(clock_time_t *)data);
       etimer_set(&collect_timer, MAX_HOPS * CLOCK_SECOND + ((node_id - 2) * SLOT_TIME) - tot_delay);
