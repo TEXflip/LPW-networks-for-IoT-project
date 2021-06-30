@@ -10,7 +10,8 @@
 #include "sched_collect.h"
 /*---------------------------------------------------------------------------*/
 #define RSSI_THRESHOLD -95 // filter bad links
-#define BEACON_FORWARD_DELAY (random_rand() % CLOCK_SECOND)
+#define SYNCH_SLOT ((clock_time_t)(CLOCK_SECOND * 1))
+#define BEACON_FORWARD_DELAY (random_rand() % SYNCH_SLOT)
 #define SEQN_OVERFLOW_TH 3 // number of accepting SEQN after overflow
 #define SLOT_FRACTION 0.01
 #define GUARD_FRACTION 0.05
@@ -64,8 +65,8 @@ PROCESS_THREAD(sink_process, ev, data)
       send_beacon(NULL);
 
       etimer_set(&beacon_etimer, EPOCH_DURATION);
-      etimer_set(&collect_timer, MAX_HOPS * CLOCK_SECOND);
-      ctimer_set(&sleep_timer, MAX_HOPS * CLOCK_SECOND + (MAX_NODES-1) * SLOT_TIME, sleep_cb, NULL);
+      etimer_set(&collect_timer, MAX_HOPS * SYNCH_SLOT);
+      ctimer_set(&sleep_timer, MAX_HOPS * SYNCH_SLOT + (MAX_NODES-1) * SLOT_TIME, sleep_cb, NULL);
     }
     else if (ev == PROCESS_EVENT_TIMER && etimer_expired(&collect_timer))
     {
@@ -89,8 +90,8 @@ PROCESS_THREAD(node_process, ev, data)
     if (ev == collect_event) // event triggered when a beacon is accepted
     {
       tot_delay = (*(clock_time_t *)data);
-      etimer_set(&collect_timer, MAX_HOPS * CLOCK_SECOND + ((node_id - 2) * SLOT_TIME) - tot_delay);
-      ctimer_set(&sleep_timer, MAX_HOPS * CLOCK_SECOND + (MAX_NODES - 1) * SLOT_TIME - tot_delay, sleep_cb, NULL);
+      etimer_set(&collect_timer, MAX_HOPS * SYNCH_SLOT + ((node_id - 2) * SLOT_TIME) - tot_delay);
+      ctimer_set(&sleep_timer, MAX_HOPS * SYNCH_SLOT + (MAX_NODES - 1) * SLOT_TIME - tot_delay, sleep_cb, NULL);
       ctimer_set(&wakeup_timer, EPOCH_DURATION - tot_delay - GUARD_TIME, wakeup_cb, NULL);
     }
     else if (ev == PROCESS_EVENT_TIMER && etimer_expired(&collect_timer))
