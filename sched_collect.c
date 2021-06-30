@@ -230,7 +230,7 @@ void uc_recv(struct unicast_conn *uc_conn, const linkaddr_t *from)
 
   struct collect_header hdr;
 
-  if (conn_ptr->metric == 0)
+  if (conn_ptr->metric == 0) // if I'm the sink
   {
     memcpy(&hdr, packetbuf_dataptr(), sizeof(struct collect_header));
     packetbuf_hdrreduce(sizeof(struct collect_header));
